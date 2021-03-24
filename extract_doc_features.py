@@ -1,6 +1,7 @@
 import cv2 as cv
 
 
+
 def extract_doc_features(filepath: str) -> dict:
     """
     Функция, которая будет вызвана для получения признаков документа, для которого задан:
@@ -16,11 +17,16 @@ def extract_doc_features(filepath: str) -> dict:
     }
     """
 
-    result_dict = {}
+    result_dict = {
+        'red_areas_count': 0,
+        'blue_areas_count': 0,
+        'text_main_title': "",
+        'text_block': "",
+        'table_cells_count': 0
+    }
     return result_dict
 
 
 if __name__ == '__main__':
     import argparse
     import os
-    print(os.getenv("INPUTS_FOLDER", default="inputs"))
