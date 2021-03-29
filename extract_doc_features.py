@@ -42,7 +42,6 @@ def detect_box(image, line_min_width=15):
     final_kernel = np.ones((3, 3), np.uint8)
     img_bin_final = cv.dilate(img_bin_final, final_kernel, iterations=1)
     ret, labels, stats, centroids = cv.connectedComponentsWithStats(~img_bin_final, connectivity=8, ltype=cv.CV_32S)
-    print(type(ret), type(labels), type(stats), type(centroids))
     return stats, labels, ret
 
 
@@ -101,17 +100,59 @@ def boxes_inside_box(big_box, small_boxes):
 
 
 def preprocess_image_for_ocr(img_src):
-    img = cv.cvtColor(img_src, cv.COLOR_BGR2GRAY)
-    _, img = cv.threshold(img, 100, 255, cv.THRESH_BINARY)
-    img = cv.merge([img for _ in range(3)])
-    return img
+    # img = cv.cvtColor(img_src, cv.COLOR_BGR2GRAY)
+    # _, img = cv.threshold(img, 100, 255, cv.THRESH_BINARY)
+    # img = cv.merge([img for _ in range(3)])
+    return img_src
 
 
 def postprocess_of_ocr(list_of_features):
     title = ocr_title_filter(list_of_features)
-    title = " ".join([x['text'] for x in title])  # .sort(key=lambda x: x['word_num'])
-    text = ""
+    text = ocr_text_filter(list_of_features)
     return title, text
+
+
+def ocr_text_filter(list_of_features):
+    whole_page_desc = list(filter(lambda x: x['level'] == 1, list_of_features))[0]
+    page_width = whole_page_desc['width']
+    some_boxes = list(filter(lambda x: x['level'] == 2, list_of_features))
+    only_text = list(
+        filter(lambda x: int(x['conf']) > 0 and re.match(r'[А-Яа-я]+', x['text']) is not None, list_of_features))
+    reg = re.compile('[^а-яА-Я]')
+    print()
+    for item in only_text:
+        item['text'] = reg.sub('', item['text'])
+
+    boxes_with_text = []
+    for box in some_boxes:
+        text_inside = boxes_inside_box(box, only_text)
+        if len(text_inside) > 0:
+            if len(text_inside) == 1:
+                box['left'] = text_inside[0]['left']
+                box['top'] = text_inside[0]['top']
+                box['width'] = text_inside[0]['width']
+                box['height'] = text_inside[0]['height']
+            boxes_with_text.append(box)
+
+    cleaned_for_text_search = []
+    for i in range(len(boxes_with_text)):
+        if len(boxes_inside_box(boxes_with_text[i], boxes_with_text)) == 1:
+            cleaned_for_text_search.append(boxes_with_text[i])
+
+    maybe_text = list(
+        filter(lambda x: box['width'] > 0.7 * page_width, cleaned_for_text_search))
+    maybe_text.sort(key=lambda x: x['width'], reverse=True)
+    try:
+        text_box = maybe_text[0]
+    except IndexError:
+        return ""
+
+    text = boxes_inside_box(text_box, only_text)
+    text = text[:10]
+
+    text = " ".join([text[i]['text'] for i in range(min(len(text), 10))])
+
+    return text
 
 
 def ocr_title_filter(list_of_features):
@@ -158,12 +199,13 @@ def ocr_title_filter(list_of_features):
     title = list(filter(lambda x: x['line_num'] == 1, title))
     title.sort(key=lambda x: x['word_num'])
     for i in range(len(title)):
-        # title[i]['text'] = title[i]['text'].lower()
         if title[i]['text'].isupper():
             if i == 0:
                 title[i]['text'] = title[i]['text'].capitalize()
             else:
                 title[i]['text'] = title[i]['text'].lower()
+
+    title = " ".join([x['text'] for x in title])
 
     return title
 
@@ -183,24 +225,12 @@ def extract_doc_features(filepath: str) -> dict:
     }
     """
 
-    file_basename = os.path.splitext(os.path.basename(filepath))[0]
-    print(file_basename)
-    create_dir = 'output_block_0'
-    try:
-        os.mkdir(create_dir)
-    except FileExistsError:
-        pass
-
     img_src = cv.imread(filepath)
 
     img = preprocess_image_for_ocr(img_src)
 
     res = pytesseract.image_to_data(img, lang="rus", output_type=pytesseract.Output.DICT)
     res = repack(res)
-
-    custom_filtered = ocr_title_filter(res)
-
-    cv.imwrite(f"{create_dir}/{file_basename}.png", draw_bboxes(img_src, custom_filtered))
 
     title, text = postprocess_of_ocr(res)
 
