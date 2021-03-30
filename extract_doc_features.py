@@ -116,9 +116,9 @@ def get_image_from_filepath(filepath: str) -> np.ndarray:
 
 
 def preprocess_image_for_ocr(img_src):
-    # img = cv.cvtColor(img_src, cv.COLOR_BGR2GRAY)
-    # _, img = cv.threshold(img, 100, 255, cv.THRESH_BINARY)
-    # img = cv.merge([img for _ in range(3)])
+    img = cv.cvtColor(img_src, cv.COLOR_BGR2GRAY)
+    _, img = cv.threshold(img, 100, 255, cv.THRESH_BINARY)
+    img = cv.merge([img for _ in range(3)])
     return img_src
 
 
@@ -156,7 +156,7 @@ def ocr_text_filter(list_of_features):
             cleaned_for_text_search.append(boxes_with_text[i])
 
     maybe_text = list(
-        filter(lambda x: box['width'] > 0.7 * page_width, cleaned_for_text_search))
+        filter(lambda x: box['width'] > 0.1 * page_width, cleaned_for_text_search))
     maybe_text.sort(key=lambda x: x['width'], reverse=True)
     try:
         text_box = maybe_text[0]
@@ -254,13 +254,13 @@ def extract_doc_features(filepath: str) -> dict:
 
     _, red_contour_count = hard_process(img_src, (155, 64, 94), (210, 250, 249))
 
-    _, _, ret = detect_box(img_src)
+    # _, _, ret = detect_box(img_src)
 
     result_dict = {
         'red_areas_count': red_contour_count,
         'blue_areas_count': blue_contour_count,
         'text_main_title': title,
         'text_block': text,
-        'table_cells_count': ret
+        'table_cells_count': 0
     }
     return result_dict
