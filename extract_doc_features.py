@@ -1,12 +1,8 @@
-import string
 import pytesseract
 import cv2 as cv
 import re
-
-import json
-import os
 import numpy as np
-from itertools import combinations
+import pdf2image
 
 
 def hard_process(image, minHSV, maxHSV):
@@ -97,6 +93,26 @@ def boxes_inside_box(big_box, small_boxes):
             small_boxes_inside.append(small_box)
 
     return small_boxes_inside
+
+
+def pdf_or_png(file_path: str):
+    with open(file_path, "rb") as file:
+        format_bytes = file.read()[1:4]
+        if format_bytes == b'PDF':
+            return "PDF"
+        elif format_bytes == b'PNG':
+            return "PNG"
+
+
+def get_image_from_filepath(filepath: str) -> np.ndarray:
+    image = None
+    file_type = pdf_or_png(filepath)
+    if file_type == "PDF":
+        images = pdf2image.convert_from_path(filepath, 300)
+        image = cv.cvtColor(np.array(images[0]), cv.COLOR_RGB2BGR)
+    elif file_type == "PNG":
+        image = cv.imread(filepath)
+    return image
 
 
 def preprocess_image_for_ocr(img_src):
@@ -225,7 +241,7 @@ def extract_doc_features(filepath: str) -> dict:
     }
     """
 
-    img_src = cv.imread(filepath)
+    img_src = get_image_from_filepath(filepath)
 
     img = preprocess_image_for_ocr(img_src)
 
