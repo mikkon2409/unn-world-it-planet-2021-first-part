@@ -122,88 +122,109 @@ def preprocess_image_for_ocr(img_src):
     return img_src
 
 
+def normalize_title(title):
+    for i in range(len(title)):
+        if title[i]['text'].isupper():
+            if i == 0:
+                title[i]['text'] = title[i]['text'].capitalize()
+            else:
+                title[i]['text'] = title[i]['text'].lower()
+    return title
+
+
 def postprocess_of_ocr(list_of_features):
-    title = ocr_title_filter(list_of_features)
-    text = ocr_text_filter(list_of_features)
+    whole_page_desc, valid_paragraph_boxes, text_boxes = get_valid_boxes(list_of_features)
+
+    title = ocr_title_filter(whole_page_desc, valid_paragraph_boxes, text_boxes)
+    title = normalize_title(title)
+    title = " ".join([x['text'] for x in title])
+
+    text = ocr_text_filter(whole_page_desc, valid_paragraph_boxes, text_boxes)
+    text = text[:10]
+    text = " ".join([text[i]['text'] for i in range(min(len(text), 10))])
+
     return title, text
 
 
-def ocr_text_filter(list_of_features):
+def get_valid_boxes(list_of_features):
     whole_page_desc = list(filter(lambda x: x['level'] == 1, list_of_features))[0]
-    page_width = whole_page_desc['width']
-    some_boxes = list(filter(lambda x: x['level'] == 2, list_of_features))
-    only_text = list(
+
+    all_big_boxes = list(filter(lambda x: x['level'] == 2, list_of_features))
+
+    text_boxes = list(
         filter(lambda x: int(x['conf']) > 0 and re.match(r'[А-Яа-я]+', x['text']) is not None, list_of_features))
     reg = re.compile('[^а-яА-Я]')
-    print()
-    for item in only_text:
+    for item in text_boxes:
         item['text'] = reg.sub('', item['text'])
 
-    boxes_with_text = []
-    for box in some_boxes:
-        text_inside = boxes_inside_box(box, only_text)
+    big_boxes_with_text = []
+    for box in all_big_boxes:
+        text_inside = boxes_inside_box(box, text_boxes)
         if len(text_inside) > 0:
             if len(text_inside) == 1:
                 box['left'] = text_inside[0]['left']
                 box['top'] = text_inside[0]['top']
                 box['width'] = text_inside[0]['width']
                 box['height'] = text_inside[0]['height']
-            boxes_with_text.append(box)
+            big_boxes_with_text.append(box)
 
-    cleaned_for_text_search = []
-    for i in range(len(boxes_with_text)):
-        if len(boxes_inside_box(boxes_with_text[i], boxes_with_text)) == 1:
-            cleaned_for_text_search.append(boxes_with_text[i])
+    valid_paragraph_boxes = list(
+        filter(lambda x: 0 <= len(boxes_inside_box(x, big_boxes_with_text)) <= 1, big_boxes_with_text))
 
+    return whole_page_desc, valid_paragraph_boxes, text_boxes
+
+
+def get_median_text_size(text_boxes: list):
+    boxes = text_boxes.copy()
+    boxes.sort(key=lambda x: x['height'])
+    return boxes[len(boxes) // 2]['height']
+
+
+def is_paragraph(text_boxes, page_width) -> bool:
+    lines = set()
+    for box in text_boxes:
+        lines.add(box['line_num'])
+
+    for line in lines:
+        one_line = list(filter(lambda x: x['line_num'] == line, text_boxes))
+        one_line.sort(key=lambda x: x['word_num'])
+        for i in range(len(one_line) - 1):
+            distance = one_line[i]['left'] + one_line[i]['width'] - one_line[i + 1]['left']
+            if distance > 0.1 * page_width:
+                return False
+
+    return True
+
+
+def ocr_text_filter(whole_page_desc, big_boxes, word_boxes):
+    page_width = whole_page_desc['width']
+    median_text_size = get_median_text_size(word_boxes)
     maybe_text = list(
-        filter(lambda x: box['width'] > 0.1 * page_width, cleaned_for_text_search))
+        filter(lambda x:
+               x['width'] > 0.5 * page_width and
+               x['height'] >= 2 * median_text_size and
+               is_paragraph(boxes_inside_box(x, word_boxes), page_width), big_boxes
+               )
+    )
     maybe_text.sort(key=lambda x: x['width'], reverse=True)
-    try:
+
+    text = []
+    if len(maybe_text) > 0:
         text_box = maybe_text[0]
-    except IndexError:
-        return ""
+        text = boxes_inside_box(text_box, word_boxes)
 
-    text = boxes_inside_box(text_box, only_text)
-    text = text[:10]
-
-    text = " ".join([text[i]['text'] for i in range(min(len(text), 10))])
-
-    return text
+    return text, maybe_text
 
 
-def ocr_title_filter(list_of_features):
-    whole_page_desc = list(filter(lambda x: x['level'] == 1, list_of_features))[0]
+def ocr_title_filter(whole_page_desc, big_boxes, word_boxes):
     page_width = whole_page_desc['width']
     page_horizontal_center = page_width / 2
-    some_boxes = list(filter(lambda x: x['level'] == 2, list_of_features))
-    only_text = list(
-        filter(lambda x: int(x['conf']) > 0 and re.match(r'[А-Яа-я]+', x['text']) is not None, list_of_features))
-    reg = re.compile('[^а-яА-Я]')
-    print()
-    for item in only_text:
-        item['text'] = reg.sub('', item['text'])
-
-    boxes_with_text = []
-    for box in some_boxes:
-        text_inside = boxes_inside_box(box, only_text)
-        if len(text_inside) > 0:
-            if len(text_inside) == 1:
-                box['left'] = text_inside[0]['left']
-                box['top'] = text_inside[0]['top']
-                box['width'] = text_inside[0]['width']
-                box['height'] = text_inside[0]['height']
-            boxes_with_text.append(box)
-
-    cleaned_for_title_search = []
-    for i in range(len(boxes_with_text)):
-        if len(boxes_inside_box(boxes_with_text[i], boxes_with_text)) == 1:
-            cleaned_for_title_search.append(boxes_with_text[i])
 
     def center_of_box(box):
         return abs(box['left'] + box['width'] / 2)
 
     maybe_title = list(
-        filter(lambda x: (center_of_box(x) - page_horizontal_center) < 0.1 * page_width, cleaned_for_title_search))
+        filter(lambda x: (center_of_box(x) - page_horizontal_center) < 0.1 * page_width, big_boxes))
     maybe_title.sort(key=lambda x: x['top'], reverse=True)
     for i in range(len(maybe_title)):
         maybe_title[i]['score'] = i / len(maybe_title)  # + \
@@ -211,17 +232,9 @@ def ocr_title_filter(list_of_features):
 
     maybe_title.sort(key=lambda x: x['score'], reverse=True)
     title_box = maybe_title[0]
-    title = boxes_inside_box(title_box, only_text)
+    title = boxes_inside_box(title_box, word_boxes)
     title = list(filter(lambda x: x['line_num'] == 1, title))
     title.sort(key=lambda x: x['word_num'])
-    for i in range(len(title)):
-        if title[i]['text'].isupper():
-            if i == 0:
-                title[i]['text'] = title[i]['text'].capitalize()
-            else:
-                title[i]['text'] = title[i]['text'].lower()
-
-    title = " ".join([x['text'] for x in title])
 
     return title
 
@@ -245,10 +258,29 @@ def extract_doc_features(filepath: str) -> dict:
 
     img = preprocess_image_for_ocr(img_src)
 
-    res = pytesseract.image_to_data(img, lang="rus", output_type=pytesseract.Output.DICT)
-    res = repack(res)
+    features = pytesseract.image_to_data(img, lang="rus", output_type=pytesseract.Output.DICT)
+    features = repack(features)
 
-    title, text = postprocess_of_ocr(res)
+    import os
+    file_basename = os.path.splitext(os.path.basename(filepath))[0]
+    print(file_basename)
+    print(features[0])
+    create_dir = 'output_block_0'
+    try:
+        os.mkdir(create_dir)
+    except FileExistsError:
+        pass
+
+    whole_page_desc, valid_paragraph_boxes, text_boxes = get_valid_boxes(features)
+    title_filtered = ocr_title_filter(whole_page_desc, valid_paragraph_boxes, text_boxes)
+    text_filtered = ocr_text_filter(whole_page_desc, valid_paragraph_boxes, text_boxes)
+
+    cv.imwrite(f"{create_dir}/{file_basename}_title.png", draw_bboxes(img_src, title_filtered))
+    cv.imwrite(f"{create_dir}/{file_basename}_text.png", draw_bboxes(img_src, maybe_text))
+    cv.imwrite(f"{create_dir}/{file_basename}_big_boxes.png", draw_bboxes(img_src, valid_paragraph_boxes))
+    cv.imwrite(f"{create_dir}/{file_basename}_all_text.png", draw_bboxes(img_src, text_boxes))
+
+    title, text = postprocess_of_ocr(features)
 
     _, blue_contour_count = hard_process(img_src, (53, 35, 134), (150, 255, 255))
 
