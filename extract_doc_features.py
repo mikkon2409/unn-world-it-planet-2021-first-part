@@ -20,10 +20,6 @@ def hard_process(image, minHSV, maxHSV):
 
     contours = [contour for contour in contours if len(contour) > 50]
 
-    # As was
-    # contours = [contour for contour in contours if len(contour) > 50]
-    # contours, hierarchy = cv.findContours(frame_threshold, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-
     return frame_threshold, len(contours)
 
 
@@ -51,26 +47,6 @@ def repack(dict_of_lists):
             tmp[key] = dict_of_lists[key][i]
         list_of_dicts.append(tmp)
     return list_of_dicts
-
-
-def draw_bboxes(image, list_of_features):
-    img_src = image.copy()
-
-    for item in list_of_features:
-        left = item['left']
-        top = item['top']
-        right = left + item['width']
-        bottom = top + item['height']
-
-        start_point = (left, top)
-        end_point = (right, bottom)
-
-        color = tuple(np.random.choice(range(50, 150), size=3))
-        color = (int(color[0]), int(color[1]), int(color[2]))
-        thickness = 2
-        cv.rectangle(img_src, start_point, end_point, color, thickness)
-
-    return img_src
 
 
 def box_contain_box(big_box, small_box):
@@ -115,13 +91,6 @@ def get_image_from_filepath(filepath: str) -> np.ndarray:
     return image
 
 
-def preprocess_image_for_ocr(img_src):
-    img = cv.cvtColor(img_src, cv.COLOR_BGR2GRAY)
-    _, img = cv.threshold(img, 100, 255, cv.THRESH_BINARY)
-    img = cv.merge([img for _ in range(3)])
-    return img_src
-
-
 def normalize_title(title):
     for i in range(len(title)):
         if title[i]['text'].isupper():
@@ -137,11 +106,16 @@ def postprocess_of_ocr(list_of_features):
 
     title = ocr_title_filter(whole_page_desc, valid_paragraph_boxes, text_boxes)
     title = normalize_title(title)
-    title = " ".join([x['text'] for x in title])
+    if len(title) > 0:
+        title = " ".join([x['text'] for x in title])
+    else:
+        title = ""
 
     text = ocr_text_filter(whole_page_desc, valid_paragraph_boxes, text_boxes)
-    text = text[:10]
-    text = " ".join([text[i]['text'] for i in range(min(len(text), 10))])
+    if len(text) > 0:
+        text = " ".join([text[i]['text'] for i in range(min(len(text), 10))])
+    else:
+        text = ""
 
     return title, text
 
@@ -182,16 +156,22 @@ def get_median_text_size(text_boxes: list):
 
 def is_paragraph(text_boxes, page_width) -> bool:
     lines = set()
+    paragraphs = set()
     for box in text_boxes:
         lines.add(box['line_num'])
+    for box in text_boxes:
+        paragraphs.add(box['par_num'])
 
     for line in lines:
-        one_line = list(filter(lambda x: x['line_num'] == line, text_boxes))
-        one_line.sort(key=lambda x: x['word_num'])
-        for i in range(len(one_line) - 1):
-            distance = one_line[i]['left'] + one_line[i]['width'] - one_line[i + 1]['left']
-            if distance > 0.1 * page_width:
-                return False
+        for par in paragraphs:
+            one_line = list(filter(lambda x: x['line_num'] == line and x['par_num'] == par, text_boxes))
+            # if len(one_line) < 2:
+            #     return False
+            one_line.sort(key=lambda x: x['word_num'])
+            for i in range(len(one_line) - 1):
+                distance = one_line[i + 1]['left'] - (one_line[i]['left'] + one_line[i]['width'])
+                if distance > 0.1 * page_width:
+                    return False
 
     return True
 
@@ -199,21 +179,20 @@ def is_paragraph(text_boxes, page_width) -> bool:
 def ocr_text_filter(whole_page_desc, big_boxes, word_boxes):
     page_width = whole_page_desc['width']
     median_text_size = get_median_text_size(word_boxes)
-    maybe_text = list(
+    maybe_paragraph = list(
         filter(lambda x:
-               x['width'] > 0.5 * page_width and
+               x['width'] > 0.7 * page_width and
                x['height'] >= 2 * median_text_size and
-               is_paragraph(boxes_inside_box(x, word_boxes), page_width), big_boxes
-               )
+               is_paragraph(boxes_inside_box(x, word_boxes), page_width), big_boxes)
     )
-    maybe_text.sort(key=lambda x: x['width'], reverse=True)
+    maybe_paragraph.sort(key=lambda x: x['top'])
 
     text = []
-    if len(maybe_text) > 0:
-        text_box = maybe_text[0]
+    if len(maybe_paragraph) > 0:
+        text_box = maybe_paragraph[0]
         text = boxes_inside_box(text_box, word_boxes)
 
-    return text, maybe_text
+    return text
 
 
 def ocr_title_filter(whole_page_desc, big_boxes, word_boxes):
@@ -227,8 +206,7 @@ def ocr_title_filter(whole_page_desc, big_boxes, word_boxes):
         filter(lambda x: (center_of_box(x) - page_horizontal_center) < 0.1 * page_width, big_boxes))
     maybe_title.sort(key=lambda x: x['top'], reverse=True)
     for i in range(len(maybe_title)):
-        maybe_title[i]['score'] = i / len(maybe_title)  # + \
-        # 1 - (center_of_box(maybe_title[i]) - page_horizontal_center) / (0.1 * page_width)
+        maybe_title[i]['score'] = i / len(maybe_title)
 
     maybe_title.sort(key=lambda x: x['score'], reverse=True)
     title_box = maybe_title[0]
@@ -256,29 +234,8 @@ def extract_doc_features(filepath: str) -> dict:
 
     img_src = get_image_from_filepath(filepath)
 
-    img = preprocess_image_for_ocr(img_src)
-
-    features = pytesseract.image_to_data(img, lang="rus", output_type=pytesseract.Output.DICT)
+    features = pytesseract.image_to_data(img_src, lang="rus", output_type=pytesseract.Output.DICT)
     features = repack(features)
-
-    import os
-    file_basename = os.path.splitext(os.path.basename(filepath))[0]
-    print(file_basename)
-    print(features[0])
-    create_dir = 'output_block_0'
-    try:
-        os.mkdir(create_dir)
-    except FileExistsError:
-        pass
-
-    whole_page_desc, valid_paragraph_boxes, text_boxes = get_valid_boxes(features)
-    title_filtered = ocr_title_filter(whole_page_desc, valid_paragraph_boxes, text_boxes)
-    text_filtered = ocr_text_filter(whole_page_desc, valid_paragraph_boxes, text_boxes)
-
-    cv.imwrite(f"{create_dir}/{file_basename}_title.png", draw_bboxes(img_src, title_filtered))
-    cv.imwrite(f"{create_dir}/{file_basename}_text.png", draw_bboxes(img_src, maybe_text))
-    cv.imwrite(f"{create_dir}/{file_basename}_big_boxes.png", draw_bboxes(img_src, valid_paragraph_boxes))
-    cv.imwrite(f"{create_dir}/{file_basename}_all_text.png", draw_bboxes(img_src, text_boxes))
 
     title, text = postprocess_of_ocr(features)
 
