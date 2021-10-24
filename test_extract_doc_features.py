@@ -15,7 +15,7 @@ class TestExtractDocFeatures(unittest.TestCase):
             entries = list(entries)
             for entry in entries[0:]:
                 root = os.path.splitext(entry.name)[0]
-                # if root != '001_0e':
+                # if root != '002_0e':
                 #     continue
                 with open(os.path.join(self.VALIDATION_FOLDER, f"{root}.json")) as json_file:
                     data = json.load(json_file)
@@ -36,11 +36,11 @@ class TestExtractDocFeatures(unittest.TestCase):
                     return norm_distance
 
                 with self.subTest(entry.name + ":title"):
-                    self.assertEqual(val_title, out_title)
-                    # self.assertEqual(text_evaluation(val_title, out_title), 0.0)
+                    # self.assertEqual(val_title, out_title)
+                    self.assertLess(text_evaluation(val_title, out_title), 0.2)
                 with self.subTest(entry.name + ":text"):
-                    self.assertEqual(val_text, out_text)
-                    # self.assertEqual(text_evaluation(val_text, out_text), 0.0)
+                    # self.assertEqual(val_text, out_text)
+                    self.assertLess(text_evaluation(val_text, out_text), 0.2)
 
 
 if __name__ == '__main__':
